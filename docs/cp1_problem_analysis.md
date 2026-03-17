@@ -10,6 +10,8 @@ Within a murmuration, starlings swirl and swoop together, rapidly changing direc
 
 However, each bird does not track every other bird in the flock. Instead, it follows roughly its seven closest neighbors. By coordinating with these nearest neighbors, starlings can maintain the characteristic structure of the flock with minimal effort. Interestingly, this optimal number depends not on the total number of birds in the flock but on the flock’s geometry — particularly its thickness.
 
+![Large starling flock](images/large-starling-murmuration.png)
+
 Each starling also maintains a safe distance from its nearest neighbors. When a bird at the edge of the flock changes direction, that shift propagates through the flock as nearby birds adjust their movement in response.
 
 In practice, individual birds respond to only three main aspects of flight — their own movement and that of nearby birds. These factors are often described as:
@@ -30,8 +32,41 @@ In the Boids model, each bird (called a "boid") is represented as an object with
 - **Alignment** – birds try to adjust their direction so that it matches the average direction of nearby birds.
 - **Cohesion** – each bird attempts to move toward the average position of nearby birds.
 
+![Large starling flock](images/Boid_3D.gif)
+
 
 ## Problem of simulating a flock of starlings
+
+#### Mapping Biological Rules to the Boids Model
+
+A key challenge is translating the biologically observed interaction rules — attraction zone, repulsion zone, and angular alignment — into the classical Boids framework defined by cohesion, separation, and alignment (introduced by Craig Reynolds).
+
+#### The Neighborhood Definition Problem
+
+A critical discrepancy between standard Boids and real starling behavior lies in how “neighbors” are defined:
+
+ - In the classical Boids model:
+     - Neighborhoods are metric — all agents within a fixed radius are considered neighbors.
+ - In real starling flocks:
+     - Neighborhoods are topological — each bird interacts with approximately 6–7 nearest neighbors, regardless of physical distance.
+
+#### Generating Murmurations
+
+In a basic Boids simulation, motion tends to stabilize into smooth, homogeneous flocking. However, real murmurations exhibit rapid directional changes and internal waves and ripples.
+
+To achieve this, additional mechanisms must be introduced:
+
+ - Delayed reactions
+
+Birds do not respond instantaneously; introducing latency in updating velocity or direction can create wave-like propagation effects.
+
+ - Stochastic perturbations (noise)
+
+Small random variations in movement can prevent over-stabilization and help generate complex, dynamic patterns.
+
+ - Local amplification of changes
+
+Small directional changes at the edge of the flock should propagate through neighbor interactions, creating emergent waves across the entire system.
 
 ---
 
@@ -47,3 +82,5 @@ https://en.wikipedia.org/wiki/Boids
 
 
 https://cs.stanford.edu/people/eroberts/courses/soco/projects/2008-09/modeling-natural-systems/boids.html
+
+https://www.raymairlot.co.uk/blog/boids.html
