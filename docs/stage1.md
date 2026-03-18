@@ -8,7 +8,11 @@ A murmuration is a flock of 500 or more starlings (sometimes even thousands) tha
 
 Within a murmuration, starlings swirl and swoop together, rapidly changing direction and creating constantly shifting shapes. The sharp pushing, pulling, diving, pulsating, and swooping of the flock — driven by individual movements — can confuse and discourage predators such as falcons, providing collective protection.
 
-However, each bird does not track every other bird in the flock. Instead, it follows roughly its seven closest neighbors. By coordinating with these nearest neighbors, starlings can maintain the characteristic structure of the flock with minimal effort. Interestingly, this optimal number depends not on the total number of birds in the flock but on the flock’s geometry — particularly its thickness.
+When responding to predators, murmurations exhibit a range of coordinated escape patterns that emerge from local interactions between individuals. These include collective turns, where large portions of the flock rapidly change direction; splits, in which the flock divides into subgroups; and compacting, where birds move closer together to reduce individual exposure. At the individual level, starlings evade predators through manoeuvres such as level turns, dives, and diving turns, adjusting both direction and altitude relative to the threat.
+
+However, each bird does not track every other bird in the flock. Instead, it follows roughly its seven closest neighbors. By coordinating with these nearest neighbors, starlings can maintain the characteristic structure of the flock with minimal effort. When uncertainty in sensing is present, interacting with six or seven neighbors optimizes the balance between group cohesiveness and individual effort.
+
+However, each bird does not track every other bird in the flock. Instead, it interacts with approximately six to seven nearest neighbors. Empirical studies show that this number is not arbitrary: interacting with around 6–7 neighbors maximizes robustness per neighbor — a balance between maintaining group cohesion and minimizing the cost of processing information. Too few neighbors lead to a disconnected interaction network, while too many reduce efficiency without significantly improving collective stability. Importantly, this optimal number depends more on the flock’s geometry (e.g., thickness) than on its total size.
 
 ![Large starling flock](images/large-starling-murmuration.png)
 
@@ -68,18 +72,36 @@ Small random variations in movement can prevent over-stabilization and help gene
 
 Small directional changes at the edge of the flock should propagate through neighbor interactions, creating emergent waves across the entire system.
 
+#### Flock Reaction to a Predator
+
+Modeling predator response requires dynamic modification of standard Boids rules. Instead of maintaining cohesion and alignment, birds near the threat should prioritize escape behavior.
+
+Individuals that detect the predator — or observe sudden changes in their nearest neighbors — should:
+- move in the opposite direction of the threat,
+- exhibit zigzag motion to reduce predictability,
+- temporarily increase separation to avoid collisions.
+
+
+
+## Tools
+
+ - ["Advanced Murmuration Simulation"](https://github.com/Alex-Scott-NZ/Murmuration#)
+
+ - ["Experiment with 3D Boids and JavaScript"](https://ercangercek.medium.com/experiment-with-3d-boids-and-javascript-fe8fa51707b8)
+
+ - various libraries for different languages (e.g [python boids](https://github.com/SverreNystad/boids-in-python))
+
 ---
 
-https://en.wikipedia.org/wiki/Starling
+[Starling Flock Networks Manage Uncertainty in Consensus at Low Cost](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1002894#abstract0)
 
-https://asknature.org/strategy/starlings-coordinate-movements-within-a-flock/
+[Starlings: Mapping and modelling the ballet of the skies](https://www.bbc.com/news/science-environment-29599792)
 
-https://www.princeton.edu/news/2013/02/07/birds-feather-track-seven-neighbors-flock-together
+[Animating murmurations of starlings](https://vanhunteradams.com/Pico/Animal_Movement/Boids_Lab.html)
 
-https://www.birdfact.com/birds/starling/starling-murmuration
+[Mechanisms driving collective escape patterns in starling flocks](https://www.biorxiv.org/content/10.1101/2024.10.27.620514v3)
 
-https://en.wikipedia.org/wiki/Boids
-
+[Starlings Coordinate Movements Within a Flock](https://asknature.org/strategy/starlings-coordinate-movements-within-a-flock/)
 
 https://cs.stanford.edu/people/eroberts/courses/soco/projects/2008-09/modeling-natural-systems/boids.html
 
