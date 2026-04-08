@@ -70,3 +70,26 @@ This study analyzes **propagation of collective response (information transfer)*
 ### [Interaction ruling animal collective behavior depends on topological rather than metric distance: Evidence from a field study](https://www.pnas.org/doi/10.1073/pnas.0711437105)
 
 (6-7 neighbours)
+
+# Models
+### Boids
+Boids were discussed in the previous stage. Implementing them would require a slight modifications regarding the controled parameters.
+### Reinforcement learning
+Article [1] shows 2 methods to model bird flocking with reinforcement learning. Both methods use multi agent approach, one learns with global knowledge for all agents,
+the other utilizes local knowledge per agent.
+Paper did not validate the results against empirical data, 
+also cost function used for training was simple and wouldn't cover all required parameters and so it would need
+a refinment.
+
+## Validating results
+For both approaches loss function can be defined to approximate parameters such as flock density, polarization or distance to the nearest neighbor.
+Calculated values can be then compared to the data from the above mentioned sources.
+
+## Tools
+* [RLlib](https://docs.ray.io/en/latest/rllib/index.html) - Ray framework library for reinforcement learning
+* [WarpDrive](https://github.com/salesforce/warp-drive) - python library for reinforcement learning using GPU acceleration.
+* [PyGame](https://www.pygame.org/docs/) - python library for 2 dimmensional graphics.
+* [Unity ml-agents](https://docs.unity3d.com/Packages/com.unity.ml-agents@3.0/manual/index.html) - Unity package enabling agent based simulation and learning with Unity engine.
+
+# Bibliography
+1. Martino Brambati and Antonio Celani and Marco Gherardi and Francesco Ginelli _Learning to flock in open space by avoiding collisions and staying together_, arXiv 2026, url: https://arxiv.org/abs/2506.15587 
