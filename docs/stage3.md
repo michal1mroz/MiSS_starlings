@@ -55,17 +55,32 @@ The reward function should quantify the similarity between simulated flock behav
 
 ## Goals
 
-The goal is to learn a local interaction policy that generates realistic flocking structures given:
-- the number of birds in the flock
+The goal is to learn a local interaction policy that generates realistic flocking structures.
+Training set (TRAIN – 7 samples)
 
-The next step is validation with empirical data based on calculated flock metrics:
-- density
-- NND
-- velocity
-- geometry (I1, aspect ratios)
-- concavity
-- balance shift
-- orientation parameters.
+The following events were added to the training set:
+
+ - 32-06
+ - 28-10
+ - 25-11
+ - 25-10
+ - 21-06
+ - 29-03
+ - 25-08
+
+Validation set (VALIDATION – 3 samples)
+The following were added to the validation set:
+ - 16-05
+ - 17-06
+ - 31-01
+
+Variable : Number of birds
+
+Outputs :
+Other variables describing the flock structure and geometry (NND (Nearest Neighbor Distance),
+Velocity (m/s), Volume, Density, Concavity, Balance shift, Thickness I1, I2/I1, I3/I1, I1-G, V-G, V-I1)
+
+In the context of reinforcement learning, these values ​​are treated as environmental observations based on which the reward is calculated.
 
 ## Scope of work
 
