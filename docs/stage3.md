@@ -36,17 +36,22 @@ The state space consists of all variables required to describe the agents and th
 - velocity $v_i^t$
 - acceleration $a_i^t$ (optional)
 
-The state of the environment would be described by: $$s_t = \{(x_i^t, v_i^t)\}^N_{i=1}$$, i.e., the set of states of all agents.
+The state of the environment would be described by:
+$$ s_t = \{(x_i^t, v_i^t)\}^N_{i=1} $$
+i.e., the set of states of all agents.
 
 ### Local observation
 
-Each agent has access only to local information. The observation for agent $i$ is defined as: $$o_t^i = \{(x_j - x_i):j \in S_j\}$$, where $S_j$ is the set of the nearest neighbors.
+Each agent has access only to local information. The observation for agent $i$ is defined as:
+$$o_t^i = \{(x_j - x_i):j \in S_j\}$$
+where $S_j$ is the set of the nearest neighbors.
 
 ### Action space
 
 The action space defines the set of possible decisions available to each agent.
 
-In this model, the action is defined as: $$\Delta v_i$$
+In this model, the action is defined as:
+$$\Delta v_i$$
 i.e., the change in the velocity vector.
 
 ### Reward
@@ -81,6 +86,20 @@ Other variables describing the flock structure and geometry (NND (Nearest Neighb
 Velocity (m/s), Volume, Density, Concavity, Balance shift, Thickness I1, I2/I1, I3/I1, I1-G, V-G, V-I1)
 
 In the context of reinforcement learning, these values ​​are treated as environmental observations based on which the reward is calculated.
+
+## Tool analysis
+Suggested program (Unity with ml-agents) can be used for visualization of 3D simulation.
+Unfortunately, additionally to the numerical calculations performed during the
+learning phase it requires the Unity engine to process all events (process physics, render the scene),
+which can possibly add significant overhead, especially for the model with large number
+of agents.
+Above issue can be avoided by limiting the usage of Unity to visualization, while performing
+training using dedicated libraries. Ml-agents extension provides the api that allows
+the user to define the agent and load its data from the external source.
+Such approach would allow us to ease the computation load, while providing the visualization
+for selected epochs and final model.
+Additionally suggested model is simple enough that it would not benefit from
+using the physics engine provided in Unity.
 
 ## Scope of work
 
