@@ -116,9 +116,9 @@ The number of birds is used as an input parameter to the model and directly dete
 
 During training, the reward function is calculated based on the following parameters:
 
- - Density r (m^-3),
  - NND r1 (m),
  - Velocity (m/s)
+ - Polarity
 
 The model penalizes agents when the simulated flock deviates from the target density, nearest-neighbor distance, and velocity observed in empirical data.
 
