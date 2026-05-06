@@ -1,0 +1,20 @@
+[project]
+name = "miss-starlings"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "nvidia-cuda-cupti>=13.0.85",
+    "nvidia-cuda-nvrtc>=13.0.88",
+    "nvidia-cuda-runtime>=13.0.96",
+    "nvidia-cufft>=12.0.0.61",
+    "nvidia-cufile>=1.15.1.6",
+    "nvidia-curand>=10.4.0.35",
+    "nvidia-cusolver>=12.0.4.66",
+    "nvidia-nvtx>=13.0.85",
+    "pipdeptree>=2.35.2",
+    "pyopengl>=3.1.10",
+    "pyqt6>=6.11.0",
+    "vispy>=0.16.1",
+]
