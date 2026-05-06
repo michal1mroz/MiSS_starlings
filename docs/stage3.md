@@ -114,13 +114,16 @@ using the physics engine provided in Unity.
 
 The number of birds is used as an input parameter to the model and directly determines the number of agents in the simulation.
 
+Agents decision is based on the position and velocity of all
+birds in the specified vicinity (where vicinty is given as a hpyerparameter of the model).
+
 During training, the reward function is calculated based on the following parameters:
 
- - Density r (m^-3),
+ - Polarity,
  - NND r1 (m),
  - Velocity (m/s)
 
-The model penalizes agents when the simulated flock deviates from the target density, nearest-neighbor distance, and velocity observed in empirical data.
+The model penalizes agents when the simulated flock deviates from the target polarisation, nearest-neighbor distance, and velocity observed in empirical data.
 
 After training, the model is evaluated using additional global metrics describing flock geometry and structure:
 
