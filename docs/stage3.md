@@ -119,9 +119,9 @@ birds in the specified vicinity (where vicinty is given as a hpyerparameter of t
 
 During training, the reward function is calculated based on the following parameters:
 
- - Polarity,
  - NND r1 (m),
  - Velocity (m/s)
+ - Polarity
 
 The model penalizes agents when the simulated flock deviates from the target polarisation, nearest-neighbor distance, and velocity observed in empirical data.
 
