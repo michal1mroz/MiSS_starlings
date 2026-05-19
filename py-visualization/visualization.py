@@ -62,12 +62,12 @@ class FlockEnv:
 
     def get_obs_batch(self) -> np.ndarray:
         N = self.num_birds
-        obs = np.zeros((N, 6), dtype=np.float32)
-        obs[:, 0:2] = self.vel[:, 0:2]  # self vel xy
+        obs = np.zeros((N, 9), dtype=np.float32)
+        obs[:, 0:3] = self.vel  # self vel xyz
 
-        # pairwise relative positions (xy)
-        # shape: (N, N, 2)
-        rel = self.pos[np.newaxis, :, :2] - self.pos[:, np.newaxis, :2]  # (N,N,2)
+        # pairwise relative positions (xyz)
+        # shape: (N, N, 3)
+        rel = self.pos[np.newaxis, :, :] - self.pos[:, np.newaxis, :]  # (N,N,3)
         dist_sq = (rel**2).sum(axis=-1)  # (N,N)
         np.fill_diagonal(dist_sq, np.inf)
         mask = dist_sq < self.neighbor_radius_sq  # (N,N) bool
@@ -75,24 +75,24 @@ class FlockEnv:
         counts = mask.sum(axis=1)  # (N,)
 
         # avg relative position
-        rel_masked = rel * mask[:, :, np.newaxis]  # (N,N,2)
+        rel_masked = rel * mask[:, :, np.newaxis]  # (N,N,3)
         avg_rel = rel_masked.sum(axis=1) / np.maximum(counts[:, np.newaxis], 1)
 
         # avg neighbor velocity
-        vel_xy = self.vel[:, :2]  # (N,2)
-        nbr_vel = (vel_xy[np.newaxis, :, :] * mask[:, :, np.newaxis]).sum(axis=1)
+        vel_xyz = self.vel  # (N,3)
+        nbr_vel = (vel_xyz[np.newaxis, :, :] * mask[:, :, np.newaxis]).sum(axis=1)
         avg_nbr_vel = nbr_vel / np.maximum(counts[:, np.newaxis], 1)
 
-        obs[:, 2:4] = avg_rel
-        obs[:, 4:6] = avg_nbr_vel
+        obs[:, 3:6] = avg_rel
+        obs[:, 6:9] = avg_nbr_vel
 
         # birds with no neighbours get zero for neighbour terms (already set)
         return obs
 
-    def step(self, actions_xy: np.ndarray, dt: float = 1.0):
-        """actions_xy: (N,2) delta vel from policy"""
-        # apply action to XY velocity
-        self.vel[:, 0:2] += np.clip(actions_xy, -1, 1) * 0.05 * dt
+    def step(self, actions_xyz: np.ndarray, dt: float = 1.0):
+        """actions_xyz: (N,3) delta vel from policy"""
+        # apply action to XYZ velocity
+        self.vel += np.clip(actions_xyz, -1, 1) * 0.05 * dt
 
         # small random Z drift so flock undulates in 3-D
         self.vel[:, 2] += np.random.uniform(-0.02, 0.02, self.num_birds) * dt
@@ -285,12 +285,12 @@ class StarlingViz:
         for i in range(len(obs)):
             out = self.session.run(
                 [self.output_name],
-                {self.input_name: obs[i : i + 1]},  # shape (1,6)
+                {self.input_name: obs[i : i + 1]},  # shape (1,input_dim)
             )[
                 0
-            ]  # shape (1,2)
+            ]
             results.append(out[0])
-        return np.stack(results, axis=0)  # (N,2)
+        return np.stack(results, axis=0)
 
     # ── Simulation tick ───────────────────────────────────────────────
 
@@ -312,19 +312,27 @@ class StarlingViz:
             return
 
         # ── inference ──
-        obs = self.env.get_obs_batch()  # (N,6)
-        # Model was exported with dummy_input shape (1,6), so batch dim is
-        # fixed to 1. Run inference per-bird and stack results.
+        obs = self.env.get_obs_batch()  # (N,9)
+        # Model was exported with dummy_input shape (1,9), so batch dim may
+        # be fixed to 1. Run inference per-bird and stack results if needed.
         if self._batched_inference:
             try:
                 raw = self.session.run([self.output_name], {self.input_name: obs})[
                     0
-                ]  # (N,2)
+                ]
             except Exception:
                 self._batched_inference = False
                 raw = self._run_per_bird(obs)
         else:
             raw = self._run_per_bird(obs)
+
+        # Allow old 2D policies to run by padding a zero Z action.
+        if raw.ndim == 2 and raw.shape[1] == 2:
+            raw = np.concatenate(
+                [raw, np.zeros((raw.shape[0], 1), dtype=raw.dtype)],
+                axis=1,
+            )
+
         self.env.step(raw, dt=self.dt_scale)
         self.step_count += 1
 
