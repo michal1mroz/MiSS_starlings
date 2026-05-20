@@ -10,7 +10,7 @@ except ImportError:
 
 import os
 
-os.environ.setdefault("DISPLAY", ":0")  # harmless on pure Wayland
+os.environ.setdefault("DISPLAY", ":0")
 
 try:
     import vispy
@@ -44,88 +44,78 @@ class FlockEnv:
         world_size: float = 20.0,
         max_speed: float = 1.0,
         neighbor_radius: float = 3.0,
+        generation_range: float = 50.0,
     ):
         self.num_birds = num_birds
         self.world_size = world_size
         self.max_speed = max_speed
         self.neighbor_radius = neighbor_radius
         self.neighbor_radius_sq = neighbor_radius**2
+        self.generation_range = generation_range
 
         self.reset()
 
     def reset(self):
         ws = self.world_size
-        self.pos = np.random.uniform(0, ws, (self.num_birds, 3)).astype(np.float32)
+        if self.generation_range >= ws:
+            middle = ws
+        else:
+            middle = ws // 2
+
+        self.pos = np.random.uniform(middle - (self.generation_range // 2), middle + (self.generation_range // 2), (self.num_birds, 3)).astype(np.float32)
         self.vel = np.random.uniform(-0.5, 0.5, (self.num_birds, 3)).astype(np.float32)
-        # zero out z-component of velocity initially for gentler start
         self.vel[:, 2] *= 0.3
 
     def get_obs_batch(self) -> np.ndarray:
         N = self.num_birds
         obs = np.zeros((N, 9), dtype=np.float32)
-        obs[:, 0:3] = self.vel  # self vel xyz
+        obs[:, 0:3] = self.vel  
 
-        # pairwise relative positions (xyz)
-        # shape: (N, N, 3)
-        rel = self.pos[np.newaxis, :, :] - self.pos[:, np.newaxis, :]  # (N,N,3)
-        dist_sq = (rel**2).sum(axis=-1)  # (N,N)
+        rel = self.pos[np.newaxis, :, :] - self.pos[:, np.newaxis, :]
+        dist_sq = (rel**2).sum(axis=-1)
         np.fill_diagonal(dist_sq, np.inf)
-        mask = dist_sq < self.neighbor_radius_sq  # (N,N) bool
+        mask = dist_sq < self.neighbor_radius_sq
 
-        counts = mask.sum(axis=1)  # (N,)
+        counts = mask.sum(axis=1) 
 
-        # avg relative position
-        rel_masked = rel * mask[:, :, np.newaxis]  # (N,N,3)
+        rel_masked = rel * mask[:, :, np.newaxis]
         avg_rel = rel_masked.sum(axis=1) / np.maximum(counts[:, np.newaxis], 1)
 
-        # avg neighbor velocity
-        vel_xyz = self.vel  # (N,3)
+        vel_xyz = self.vel
         nbr_vel = (vel_xyz[np.newaxis, :, :] * mask[:, :, np.newaxis]).sum(axis=1)
         avg_nbr_vel = nbr_vel / np.maximum(counts[:, np.newaxis], 1)
 
         obs[:, 3:6] = avg_rel
         obs[:, 6:9] = avg_nbr_vel
 
-        # birds with no neighbours get zero for neighbour terms (already set)
         return obs
 
     def step(self, actions_xyz: np.ndarray, dt: float = 1.0):
         """actions_xyz: (N,3) delta vel from policy"""
-        # apply action to XYZ velocity
         self.vel += np.clip(actions_xyz, -1, 1) * 0.05 * dt
 
-        # small random Z drift so flock undulates in 3-D
         self.vel[:, 2] += np.random.uniform(-0.02, 0.02, self.num_birds) * dt
         self.vel[:, 2] = np.clip(
             self.vel[:, 2], -self.max_speed * 0.4, self.max_speed * 0.4
         )
 
-        # clamp speed
         speed = np.linalg.norm(self.vel, axis=1, keepdims=True)
         too_fast = (speed > self.max_speed).squeeze()
         self.vel[too_fast] /= speed[too_fast]
         self.vel[too_fast] *= self.max_speed
 
-        # integrate positions with wrap
         self.pos += self.vel * dt
         self.pos %= self.world_size
 
-
-# ─────────────────────────────────────────────
-#  Colour helpers
-# ─────────────────────────────────────────────
-
-
 def speed_to_color(vel: np.ndarray, max_speed: float) -> np.ndarray:
     """Map speed to a colour gradient: deep blue → teal → gold."""
-    speed = np.linalg.norm(vel, axis=1)  # (N,)
-    t = np.clip(speed / max_speed, 0, 1)[:, None]  # (N,1)
+    speed = np.linalg.norm(vel, axis=1)
+    t = np.clip(speed / max_speed, 0, 1)[:, None]
 
-    slow = np.array([0.15, 0.40, 0.85, 1.0])  # blue
-    mid = np.array([0.10, 0.80, 0.70, 1.0])  # teal
-    fast = np.array([1.00, 0.75, 0.10, 1.0])  # gold
+    slow = np.array([0.15, 0.40, 0.85, 1.0])
+    mid = np.array([0.10, 0.80, 0.70, 1.0])
+    fast = np.array([1.00, 0.75, 0.10, 1.0])
 
-    # two-stop gradient
     t2 = t * 2
     colors = np.where(
         t < 0.5,
@@ -133,11 +123,6 @@ def speed_to_color(vel: np.ndarray, max_speed: float) -> np.ndarray:
         mid * (1 - (t2 - 1)) + fast * (t2 - 1),
     )
     return colors.astype(np.float32)
-
-
-# ─────────────────────────────────────────────
-#  Main visualizer
-# ─────────────────────────────────────────────
 
 
 class StarlingViz:
@@ -156,26 +141,23 @@ class StarlingViz:
         self.paused = False
         self.step_count = 0
 
-        # ── ONNX session ──────────────────────────────────────────────
         opts = ort.SessionOptions()
         opts.inter_op_num_threads = 1
         opts.intra_op_num_threads = 4
         self.session = ort.InferenceSession(onnx_path, sess_options=opts)
         self.input_name = self.session.get_inputs()[0].name
         self.output_name = self.session.get_outputs()[0].name
-        # Try batched first; fall back to per-bird if model has fixed batch=1
         self._batched_inference = True
         print(f"Loaded ONNX model: {onnx_path}")
 
-        # ── Environment ───────────────────────────────────────────────
         self.env = FlockEnv(
             num_birds=num_birds,
             world_size=world_size,
             max_speed=1.0,
             neighbor_radius=3.0,
+            generation_range=50.0,
         )
 
-        # ── Vispy canvas + 3-D scene ───────────────────────────────────
         self.canvas = scene.SceneCanvas(
             title="Starling Flock — ONNX",
             size=(1280, 800),
@@ -194,7 +176,6 @@ class StarlingViz:
             azimuth=45,
         )
 
-        # ── Spheres as Markers ─────────────────────────────────────────
         pos0 = self.env.pos.copy()
         col0 = speed_to_color(self.env.vel, self.env.max_speed)
         self.scatter = visuals.Markers(
@@ -211,7 +192,6 @@ class StarlingViz:
         )
         self.view.add(self.scatter)
 
-        # ── Wire-frame world box ───────────────────────────────────────
         ws = world_size
         box_verts = np.array(
             [
@@ -235,7 +215,6 @@ class StarlingViz:
             connect="strip",
             parent=self.view.scene,
         )
-        # four vertical pillars
         for x, y in [(0, 0), (ws, 0), (ws, ws), (0, ws)]:
             scene.visuals.Line(
                 pos=np.array([[x, y, 0], [x, y, ws]], dtype=np.float32),
@@ -243,7 +222,6 @@ class StarlingViz:
                 width=1,
                 parent=self.view.scene,
             )
-        # remaining horizontal edges at top
         for (x1, y1), (x2, y2) in [
             ((0, 0), (ws, 0)),
             ((ws, 0), (ws, ws)),
@@ -257,7 +235,6 @@ class StarlingViz:
                 parent=self.view.scene,
             )
 
-        # ── HUD text ──────────────────────────────────────────────────
         self.hud = scene.visuals.Text(
             "",
             color="white",
@@ -268,7 +245,6 @@ class StarlingViz:
         )
         self.hud.pos = (12, 12, 0)
 
-        # ── Timer ─────────────────────────────────────────────────────
         self._last_t = time.perf_counter()
         self._fps_acc = 0.0
         self._fps_n = 0
@@ -285,14 +261,12 @@ class StarlingViz:
         for i in range(len(obs)):
             out = self.session.run(
                 [self.output_name],
-                {self.input_name: obs[i : i + 1]},  # shape (1,input_dim)
+                {self.input_name: obs[i : i + 1]},  
             )[
                 0
             ]
             results.append(out[0])
         return np.stack(results, axis=0)
-
-    # ── Simulation tick ───────────────────────────────────────────────
 
     def _tick(self, event):
         now = time.perf_counter()
@@ -312,9 +286,7 @@ class StarlingViz:
             return
 
         # ── inference ──
-        obs = self.env.get_obs_batch()  # (N,9)
-        # Model was exported with dummy_input shape (1,9), so batch dim may
-        # be fixed to 1. Run inference per-bird and stack results if needed.
+        obs = self.env.get_obs_batch() 
         if self._batched_inference:
             try:
                 raw = self.session.run([self.output_name], {self.input_name: obs})[
@@ -326,7 +298,6 @@ class StarlingViz:
         else:
             raw = self._run_per_bird(obs)
 
-        # Allow old 2D policies to run by padding a zero Z action.
         if raw.ndim == 2 and raw.shape[1] == 2:
             raw = np.concatenate(
                 [raw, np.zeros((raw.shape[0], 1), dtype=raw.dtype)],
@@ -336,7 +307,6 @@ class StarlingViz:
         self.env.step(raw, dt=self.dt_scale)
         self.step_count += 1
 
-        # ── update visuals ──
         colors = speed_to_color(self.env.vel, self.env.max_speed)
         self.scatter.set_data(
             self.env.pos.copy(),
@@ -355,8 +325,6 @@ class StarlingViz:
             f"[{state}]\n"
             f"[Space] pause  [R] reset cam  [+/-] speed  [Q] quit"
         )
-
-    # ── Key bindings ──────────────────────────────────────────────────
 
     def _on_key(self, event):
         k = event.key.name if event.key else ""
@@ -380,18 +348,9 @@ class StarlingViz:
         app.run()
 
 
-# ─────────────────────────────────────────────
-#  Entry point
-# ─────────────────────────────────────────────
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="3-D Starling Flock Visualization (ONNX)",
-        epilog=(
-            "Wayland/Arch tip: if no window appears, install PyQt5 or PyQt6:\n"
-            "  pip install PyQt5\n"
-            "Then optionally force it:  --backend pyqt5"
-        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
@@ -410,7 +369,6 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    # Allow command-line override of the backend selected at import time
     if args.backend:
         try:
             vispy.use(args.backend)
