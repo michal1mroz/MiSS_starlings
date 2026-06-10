@@ -1,3 +1,14 @@
+"""
+visualization.py — Starling Flock Visualiser with Leader Birds
+
+Leader birds are assigned randomly at reset. They:
+  - Have elevated neighbour weight (LEADER_WEIGHT) so the flock steers toward them
+  - Take random actions with probability LEADER_EPSILON (vs FOLLOWER_EPSILON for others)
+  - Are rendered in a distinct colour with a translucent sphere halo
+
+All tunable knobs live in the FLOCK CONFIG block below.
+"""
+
 from __future__ import annotations
 
 import csv
@@ -7,6 +18,18 @@ import argparse
 import datetime
 import numpy as np
 from pathlib import Path
+
+
+NUM_LEADERS: int = 1
+LEADER_WEIGHT: float = 20.0
+LEADER_EPSILON: float = 0.50
+
+FOLLOWER_EPSILON: float = 0.1
+LEADER_COLOR: tuple = (1.00, 0.30, 0.10, 1.0)
+
+LEADER_HALO_COLOR: tuple = (1.00, 0.30, 0.10, 0.18)
+LEADER_HALO_RADIUS: float = 1.2
+
 
 try:
     import onnxruntime as ort
@@ -32,11 +55,10 @@ except ImportError:
     sys.exit("vispy not installed.  pip install vispy pyopengl PyQt5")
 
 sys.path.insert(0, os.path.dirname(__file__))
-from starling_env import StarlingFlockEnv
+from starling_env import StarlingFlockEnv, StarlingLeaderEnv
 
 
 def speed_to_color(vel: np.ndarray, max_speed: float) -> np.ndarray:
-    """Blue → teal → gold gradient keyed on speed."""
     t = np.clip(np.linalg.norm(vel, axis=1) / max_speed, 0, 1)[:, None]
     slow = np.array([0.15, 0.40, 0.85, 1.0])
     mid = np.array([0.10, 0.80, 0.70, 1.0])
@@ -45,6 +67,53 @@ def speed_to_color(vel: np.ndarray, max_speed: float) -> np.ndarray:
     return np.where(
         t < 0.5, slow * (1 - t2) + mid * t2, mid * (1 - (t2 - 1)) + fast * (t2 - 1)
     ).astype(np.float32)
+
+
+def build_halo_sphere(radius: float = 1.0, rows: int = 12, cols: int = 16) -> np.ndarray:
+    verts = []
+
+    for r in range(1, rows):
+        phi = np.pi * r / rows
+        z = radius * np.cos(phi)
+        rr = radius * np.sin(phi)
+        theta = np.linspace(0, 2 * np.pi, cols + 1)
+        ring = np.column_stack([rr * np.cos(theta), rr * np.sin(theta),
+                                 np.full(cols + 1, z)])
+        verts.append(ring)
+        verts.append(np.full((1, 3), np.nan))
+
+    for c in range(cols):
+        theta = 2 * np.pi * c / cols
+        phi = np.linspace(0, np.pi, rows + 1)
+        line = np.column_stack([
+            radius * np.sin(phi) * np.cos(theta),
+            radius * np.sin(phi) * np.sin(theta),
+            radius * np.cos(phi),
+        ])
+        verts.append(line)
+        verts.append(np.full((1, 3), np.nan))
+
+    return np.concatenate(verts, axis=0).astype(np.float32)
+
+
+def _patch_leader_weights(env: StarlingFlockEnv, leader_ids: list[int]) -> None:
+    import torch
+
+    _original_compute_weights = env.__class__._compute_weights
+
+    def patched_compute_weights(self):
+        w = _original_compute_weights(self)
+        import torch as _torch
+        bonus = _torch.zeros(w.shape[0], device=w.device)
+        for lid in leader_ids:
+            bonus[lid] = LEADER_WEIGHT
+        w = w + bonus.unsqueeze(0)
+        w.fill_diagonal_(0.0)
+        w = w / w.sum(dim=1, keepdim=True).clamp(min=1e-8)
+        return w
+
+    import types
+    env._compute_weights = types.MethodType(patched_compute_weights, env)
 
 
 class FlockLogger:
@@ -90,6 +159,31 @@ class FlockLogger:
         print(f"[Logger] closed {self.log_path}")
 
 
+class LeaderHalos:
+    def __init__(self, view, num_leaders: int, radius: float, color: tuple):
+        self._template = build_halo_sphere(radius)
+        self._visuals: list = []
+        for _ in range(num_leaders):
+            v = scene.visuals.Line(
+                pos=self._template,
+                color=color,
+                connect="strip",
+                width=1,
+                parent=view.scene,
+            )
+            self._visuals.append(v)
+
+    def update(self, positions: np.ndarray) -> None:
+        """Move each sphere to the corresponding leader position."""
+        for v, pos in zip(self._visuals, positions):
+            moved = self._template + pos[None, :]
+            v.set_data(pos=moved)
+
+    def set_visible(self, visible: bool) -> None:
+        for v in self._visuals:
+            v.visible = visible
+
+
 class StarlingViz:
     def __init__(
         self,
@@ -98,7 +192,7 @@ class StarlingViz:
         world_size: float = 40.0,
         generation_range: float = 20.0,
         target_fps: float = 30.0,
-        epsilon: float = 0.10,
+        epsilon: float = FOLLOWER_EPSILON,
         sigma: float = 3.0,
         log_path: str | None = None,
         log_every: int = 1,
@@ -108,13 +202,14 @@ class StarlingViz:
         self.world_size = world_size
         self.generation_range = min(generation_range, world_size)
         self.target_fps = target_fps
-        self.epsilon = epsilon
+        self.epsilon = epsilon          # follower base epsilon (CLI / runtime tweak)
         self.dt_scale = 1.0
         self.paused = True
         self.step_count = 0
         self.log_every = log_every
         self._last_stats: dict[str, float] = {}
 
+        # ---- ONNX session ----
         opts = ort.SessionOptions()
         opts.intra_op_num_threads = 4
         self.session = ort.InferenceSession(onnx_path, sess_options=opts)
@@ -122,6 +217,7 @@ class StarlingViz:
         self.output_name = self.session.get_outputs()[0].name
         print(f"Loaded: {onnx_path}")
 
+        # ---- Environment ----
         self.env = StarlingFlockEnv(
             num_birds=num_birds,
             world_size=world_size,
@@ -130,14 +226,25 @@ class StarlingViz:
             spawn_range=self.generation_range,
             device="cpu",
         )
+
+        # elect leaders and patch weight computation
+        self.leader_ids: list[int] = sorted(
+            np.random.choice(num_birds, size=min(NUM_LEADERS, num_birds), replace=False).tolist()
+        )
+        print(f"[Leaders] bird indices: {self.leader_ids}  "
+              f"(weight bonus={LEADER_WEIGHT}, ε={LEADER_EPSILON})")
+        _patch_leader_weights(self.env, self.leader_ids)
+
         self.env.reset()
 
+        # ---- Logger ----
         if log_path is None:
             ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             log_path = f"logs/flock_log_{ts}.csv"
         self.logger = FlockLogger(log_path, print_every=log_print_every)
         self.logging_enabled = True
 
+        # ---- Canvas ----
         self.canvas = scene.SceneCanvas(
             title="Starling Flock — ONNX",
             size=(1280, 800),
@@ -157,24 +264,31 @@ class StarlingViz:
             azimuth=45,
         )
 
+        # ---- Bird scatter ----
+        self._colors = self._build_colors()
         self.scatter = visuals.Markers(spherical=True, scaling=True, alpha=1.0)
         self.scatter.set_data(
             self.env.pos_np,
-            face_color=speed_to_color(self.env.vel_np, self.env.max_speed),
+            face_color=self._colors,
             edge_color=None,
             size=0.45,
             edge_width=0,
         )
         self.view.add(self.scatter)
 
+        # ---- Leader halos ----
+        self.halos = LeaderHalos(
+            self.view,
+            num_leaders=len(self.leader_ids),
+            radius=LEADER_HALO_RADIUS,
+            color=LEADER_HALO_COLOR,
+        )
+        self.halos.update(self.env.pos_np[self.leader_ids])
+
+        # ---- World box ----
         self._draw_box(ws, color=(0.3, 0.3, 0.5, 0.3))
 
-        #        if self.generation_range < ws:
-        #            half = ws / 2.0
-        #            gr = self.generation_range
-        #            offset = half - gr / 2.0
-        #            self._draw_box(gr, color=(0.4, 0.7, 0.4, 0.5), offset=offset)
-
+        # ---- HUD ----
         self.hud_stats = scene.visuals.Text(
             "",
             color="white",
@@ -205,8 +319,51 @@ class StarlingViz:
             start=True,
         )
 
+    # ------------------------------------------------------------------
+    # Colour helpers
+    # ------------------------------------------------------------------
+
+    def _build_colors(self) -> np.ndarray:
+        """Speed-based colours for all birds, leaders overridden to LEADER_COLOR."""
+        colors = speed_to_color(self.env.vel_np, self.env.max_speed)
+        lc = np.array(LEADER_COLOR, dtype=np.float32)
+        for lid in self.leader_ids:
+            colors[lid] = lc
+        return colors
+
+    def _update_colors(self) -> np.ndarray:
+        colors = speed_to_color(self.env.vel_np, self.env.max_speed)
+        lc = np.array(LEADER_COLOR, dtype=np.float32)
+        for lid in self.leader_ids:
+            colors[lid] = lc
+        return colors
+    
+
+    def _leader_obs(self, leader_ids: list[int]) -> np.ndarray:
+        """
+        Build leader-policy observations matching StarlingLeaderEnv:
+        [vel_x, vel_y, vel_z, pos_x, pos_y, pos_z, dist_x, dist_y, dist_z]
+        with position centered in [-world/2, world/2].
+        """
+        half = self.world_size / 2.0
+
+        vel = self.env.vel_np[leader_ids] / self.env.max_speed
+        vel = np.clip(vel, -1.0, 1.0)
+
+        centered_pos = self.env.pos_np[leader_ids] - half
+        pos = centered_pos / half
+        pos = np.clip(pos, -1.0, 1.0)
+
+        dist_to_walls = (half - np.abs(centered_pos)) / half
+        dist_to_walls = np.clip(dist_to_walls, 0.0, 1.0)
+
+        return np.concatenate([vel, pos, dist_to_walls], axis=1).astype(np.float32)
+    
+    # ------------------------------------------------------------------
+    # Box drawing
+    # ------------------------------------------------------------------
+
     def _draw_box(self, size: float, color: tuple, offset: float = 0.0) -> None:
-        """Draw a wireframe cube of `size` starting at `offset` on each axis."""
         o = offset
         s = size
         kw = dict(color=color, width=1, parent=self.view.scene)
@@ -267,17 +424,20 @@ class StarlingViz:
             actions = np.stack(
                 [
                     self.session.run(
-                        [self.output_name], {self.input_name: obs_np[i : i + 1]}
+                        [self.output_name], {self.input_name: obs_np[i: i + 1]}
                     )[0][0]
                     for i in range(self.num_birds)
                 ]
             )
 
-        if self.epsilon > 0:
-            N = self.num_birds
-            mask = np.random.rand(N) < self.epsilon
-            noise = np.random.uniform(-1.0, 1.0, (N, 3)).astype(np.float32)
-            actions = np.where(mask[:, None], noise, actions)
+        N = self.num_birds
+        epsilons = np.full(N, self.epsilon, dtype=np.float32)
+        for lid in self.leader_ids:
+            epsilons[lid] = LEADER_EPSILON
+
+        mask = np.random.rand(N) < epsilons
+        noise = np.random.uniform(-1.0, 1.0, (N, 3)).astype(np.float32)
+        actions = np.where(mask[:, None], noise, actions)
 
         self.env.step(actions)
         self.step_count += 1
@@ -288,7 +448,7 @@ class StarlingViz:
         if self.logging_enabled and self.step_count % self.log_every == 0:
             self.logger.log(self.step_count, stats)
 
-        colors = speed_to_color(self.env.vel_np, self.env.max_speed)
+        colors = self._update_colors()
         self.scatter.set_data(
             self.env.pos_np,
             face_color=colors,
@@ -296,6 +456,8 @@ class StarlingViz:
             size=0.45,
             edge_width=0,
         )
+        self.halos.update(self.env.pos_np[self.leader_ids])
+
         self._update_hud()
 
     def _update_hud(self):
@@ -303,22 +465,23 @@ class StarlingViz:
         state = "PAUSED" if self.paused else "RUNNING"
         log_s = "ON " if self.logging_enabled else "OFF"
 
+        leader_str = ",".join(str(i) for i in self.leader_ids)
         self.hud_stats.text = (
-            f"[{state}] Step: {self.step_count:6d} "
-            # f"FPS: {self._fps_disp:5.1f}   "
-            f"Speed×: {self.dt_scale:.2f} "
-            f"Eps: {self.epsilon:.2f} "
+            f"[{state}] Step: {self.step_count:6d}  "
+            f"Speed×: {self.dt_scale:.2f}  "
+            f"Eps(f/l): {self.epsilon:.2f}/{LEADER_EPSILON:.2f}  "
             f"Log: {log_s}\n"
-            f"mean speed: {s.get('mean_speed',    0):.4f}\n"
-            f"mean NND: {s.get('mean_nnd',      0):.4f}\n"
-            f"polarity: {s.get('global_polarity',0):.4f}\n"
+            f"Leaders: [{leader_str}]  weight+{LEADER_WEIGHT:.0f}\n"
+            f"mean speed:   {s.get('mean_speed',    0):.4f}\n"
+            f"mean NND:     {s.get('mean_nnd',      0):.4f}\n"
+            f"polarity:     {s.get('global_polarity',0):.4f}\n"
             f"flock radius: {s.get('flock_radius',  0):.4f}\n"
-            f"mean reward: {s.get('mean_reward',   0):.4f}"
+            f"mean reward:  {s.get('mean_reward',   0):.4f}"
         )
 
         self.hud_ctrl.text = (
             "[Space] pause   [R] reset cam   [+/-] sim speed   "
-            "[E/D] epsilon [+/-] 0.05   [L] toggle log   [Q] quit"
+            "[E/D] follower-ε ±0.05   [L] toggle log   [N] new leaders   [Q] quit"
         )
 
     def _on_key(self, event):
@@ -347,6 +510,17 @@ class StarlingViz:
             self.logging_enabled = not self.logging_enabled
             state = "enabled" if self.logging_enabled else "disabled"
             print(f"[Logger] {state}")
+        elif k == "N":
+            # Re-elect leaders at runtime
+            self.leader_ids = sorted(
+                np.random.choice(
+                    self.num_birds,
+                    size=min(NUM_LEADERS, self.num_birds),
+                    replace=False,
+                ).tolist()
+            )
+            _patch_leader_weights(self.env, self.leader_ids)
+            print(f"[Leaders] re-elected: {self.leader_ids}")
 
     def run(self):
         app.run()
@@ -366,7 +540,12 @@ if __name__ == "__main__":
         help="Spawn region side length centred in world (default 20.0)",
     )
     parser.add_argument("--fps", type=float, default=30.0)
-    parser.add_argument("--epsilon", type=float, default=0.10)
+    parser.add_argument(
+        "--epsilon",
+        type=float,
+        default=FOLLOWER_EPSILON,
+        help=f"Follower random-action probability (default {FOLLOWER_EPSILON})",
+    )
     parser.add_argument(
         "--sigma",
         type=float,
