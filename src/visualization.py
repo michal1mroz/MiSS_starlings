@@ -1,14 +1,3 @@
-"""
-visualization.py — Starling Flock Visualiser with Leader Birds
-
-Leader birds are assigned randomly at reset. They:
-  - Have elevated neighbour weight (LEADER_WEIGHT) so the flock steers toward them
-  - Take random actions with probability LEADER_EPSILON (vs FOLLOWER_EPSILON for others)
-  - Are rendered in a distinct colour with a translucent sphere halo
-
-All tunable knobs live in the FLOCK CONFIG block below.
-"""
-
 from __future__ import annotations
 
 import csv
@@ -18,7 +7,6 @@ import argparse
 import datetime
 import numpy as np
 from pathlib import Path
-
 
 NUM_LEADERS: int = 1
 LEADER_WEIGHT: float = 20.0
@@ -55,7 +43,7 @@ except ImportError:
     sys.exit("vispy not installed.  pip install vispy pyopengl PyQt5")
 
 sys.path.insert(0, os.path.dirname(__file__))
-from starling_env import StarlingFlockEnv, StarlingLeaderEnv
+from starling_env import StarlingFlockEnv
 
 
 def speed_to_color(vel: np.ndarray, max_speed: float) -> np.ndarray:
@@ -69,7 +57,9 @@ def speed_to_color(vel: np.ndarray, max_speed: float) -> np.ndarray:
     ).astype(np.float32)
 
 
-def build_halo_sphere(radius: float = 1.0, rows: int = 12, cols: int = 16) -> np.ndarray:
+def build_halo_sphere(
+    radius: float = 1.0, rows: int = 12, cols: int = 16
+) -> np.ndarray:
     verts = []
 
     for r in range(1, rows):
@@ -77,19 +67,22 @@ def build_halo_sphere(radius: float = 1.0, rows: int = 12, cols: int = 16) -> np
         z = radius * np.cos(phi)
         rr = radius * np.sin(phi)
         theta = np.linspace(0, 2 * np.pi, cols + 1)
-        ring = np.column_stack([rr * np.cos(theta), rr * np.sin(theta),
-                                 np.full(cols + 1, z)])
+        ring = np.column_stack(
+            [rr * np.cos(theta), rr * np.sin(theta), np.full(cols + 1, z)]
+        )
         verts.append(ring)
         verts.append(np.full((1, 3), np.nan))
 
     for c in range(cols):
         theta = 2 * np.pi * c / cols
         phi = np.linspace(0, np.pi, rows + 1)
-        line = np.column_stack([
-            radius * np.sin(phi) * np.cos(theta),
-            radius * np.sin(phi) * np.sin(theta),
-            radius * np.cos(phi),
-        ])
+        line = np.column_stack(
+            [
+                radius * np.sin(phi) * np.cos(theta),
+                radius * np.sin(phi) * np.sin(theta),
+                radius * np.cos(phi),
+            ]
+        )
         verts.append(line)
         verts.append(np.full((1, 3), np.nan))
 
@@ -104,6 +97,7 @@ def _patch_leader_weights(env: StarlingFlockEnv, leader_ids: list[int]) -> None:
     def patched_compute_weights(self):
         w = _original_compute_weights(self)
         import torch as _torch
+
         bonus = _torch.zeros(w.shape[0], device=w.device)
         for lid in leader_ids:
             bonus[lid] = LEADER_WEIGHT
@@ -113,6 +107,7 @@ def _patch_leader_weights(env: StarlingFlockEnv, leader_ids: list[int]) -> None:
         return w
 
     import types
+
     env._compute_weights = types.MethodType(patched_compute_weights, env)
 
 
@@ -227,12 +222,15 @@ class StarlingViz:
             device="cpu",
         )
 
-        # elect leaders and patch weight computation
         self.leader_ids: list[int] = sorted(
-            np.random.choice(num_birds, size=min(NUM_LEADERS, num_birds), replace=False).tolist()
+            np.random.choice(
+                num_birds, size=min(NUM_LEADERS, num_birds), replace=False
+            ).tolist()
         )
-        print(f"[Leaders] bird indices: {self.leader_ids}  "
-              f"(weight bonus={LEADER_WEIGHT}, ε={LEADER_EPSILON})")
+        print(
+            f"[Leaders] bird indices: {self.leader_ids}  "
+            f"(weight bonus={LEADER_WEIGHT}, ε={LEADER_EPSILON})"
+        )
         _patch_leader_weights(self.env, self.leader_ids)
 
         self.env.reset()
@@ -333,28 +331,7 @@ class StarlingViz:
         for lid in self.leader_ids:
             colors[lid] = lc
         return colors
-    
 
-    def _leader_obs(self, leader_ids: list[int]) -> np.ndarray:
-        """
-        Build leader-policy observations matching StarlingLeaderEnv:
-        [vel_x, vel_y, vel_z, pos_x, pos_y, pos_z, dist_x, dist_y, dist_z]
-        with position centered in [-world/2, world/2].
-        """
-        half = self.world_size / 2.0
-
-        vel = self.env.vel_np[leader_ids] / self.env.max_speed
-        vel = np.clip(vel, -1.0, 1.0)
-
-        centered_pos = self.env.pos_np[leader_ids] - half
-        pos = centered_pos / half
-        pos = np.clip(pos, -1.0, 1.0)
-
-        dist_to_walls = (half - np.abs(centered_pos)) / half
-        dist_to_walls = np.clip(dist_to_walls, 0.0, 1.0)
-
-        return np.concatenate([vel, pos, dist_to_walls], axis=1).astype(np.float32)
-    
     def _draw_box(self, size: float, color: tuple, offset: float = 0.0) -> None:
         o = offset
         s = size
@@ -416,7 +393,7 @@ class StarlingViz:
             actions = np.stack(
                 [
                     self.session.run(
-                        [self.output_name], {self.input_name: obs_np[i: i + 1]}
+                        [self.output_name], {self.input_name: obs_np[i : i + 1]}
                     )[0][0]
                     for i in range(self.num_birds)
                 ]
@@ -503,7 +480,6 @@ class StarlingViz:
             state = "enabled" if self.logging_enabled else "disabled"
             print(f"[Logger] {state}")
         elif k == "N":
-            # Re-elect leaders at runtime
             self.leader_ids = sorted(
                 np.random.choice(
                     self.num_birds,

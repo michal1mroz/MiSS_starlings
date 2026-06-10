@@ -1,51 +1,56 @@
+from __future__ import annotations
+
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 
 from starling_env import StarlingFlockEnv
 
 
-# ---------------------------------------------------------------------------
-# Policy network
-# ---------------------------------------------------------------------------
-
-class SharedPolicy(nn.Module):
-    """
-    Shared policy used by every bird.
-
-    Input  : observation vector (9-dim)
-    Output : mean action (3-dim), passed through Tanh → [-1, 1]
-    """
-
-    def __init__(self, obs_dim: int = 9, action_dim: int = 3, hidden: int = 128):
+class ActorCritic(nn.Module):
+    def __init__(self, obs_dim: int = 9, action_dim: int = 3, hidden: int = 256):
         super().__init__()
-        self.net = nn.Sequential(
+
+        self.trunk = nn.Sequential(
             nn.Linear(obs_dim, hidden),
             nn.LayerNorm(hidden),
-            nn.ReLU(),
+            nn.ELU(),
             nn.Linear(hidden, hidden),
             nn.LayerNorm(hidden),
-            nn.ReLU(),
-            nn.Linear(hidden, action_dim),
-            nn.Tanh(),
+            nn.ELU(),
+            nn.Linear(hidden, hidden // 2),
+            nn.ELU(),
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
+        self.actor = nn.Linear(hidden // 2, action_dim)
+        self.critic = nn.Linear(hidden // 2, 1)
 
+        self.log_std = nn.Parameter(torch.full((action_dim,), 0.5))
 
-# ---------------------------------------------------------------------------
-# REINFORCE training loop (GPU-accelerated)
-# ---------------------------------------------------------------------------
+        nn.init.orthogonal_(self.actor.weight, gain=0.01)
+        nn.init.zeros_(self.actor.bias)
+
+    def forward(self, x: torch.Tensor):
+        h = self.trunk(x)
+        mean = self.actor(h)
+        value = self.critic(h).squeeze(-1)
+        return mean, value
+
+    def log_std_clamped(self) -> torch.Tensor:
+        return self.log_std.clamp(-2.0, 0.5)
+
 
 def train(
     num_birds: int = 150,
-    episodes: int = 200,
+    episodes: int = 300,
     gamma: float = 0.99,
     lr: float = 3e-4,
-    action_std: float = 0.15,
-    hidden: int = 128,
+    hidden: int = 256,
+    value_coef: float = 0.5,
+    entropy_coef: float = 0.05,
+    entropy_min: float = 0.005,
     device_str: str = "cuda" if torch.cuda.is_available() else "cpu",
     onnx_path: str = "starling_policy.onnx",
 ):
@@ -53,96 +58,121 @@ def train(
     print(f"Training on: {device}")
 
     env = StarlingFlockEnv(num_birds=num_birds, device=device)
+    model = ActorCritic(obs_dim=9, action_dim=3, hidden=hidden).to(device)
+    opt = optim.Adam(model.parameters(), lr=lr)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(
+        opt, T_max=episodes, eta_min=lr * 0.1
+    )
 
-    model = SharedPolicy(obs_dim=9, action_dim=3, hidden=hidden).to(device)
-    optimizer = optim.Adam(model.parameters(), lr=lr)
-
-    # Fixed std for exploration (could be learnable)
-    log_std = torch.full((3,), np.log(action_std), device=device)
+    N = num_birds
 
     for episode in range(episodes):
 
+        frac = episode / max(episodes - 1, 1)
+        ent_coef_now = entropy_coef + frac * (entropy_min - entropy_coef)
+
         obs_dict, _ = env.reset()
-        N = num_birds
 
         log_probs_buf: list[torch.Tensor] = []
-        rewards_buf:   list[float]         = []
+        values_buf: list[torch.Tensor] = []
+        entropy_buf: list[torch.Tensor] = []
+        rewards_buf: list[torch.Tensor] = []
 
         done = False
 
         while not done:
-
-            # Stack all observations → (N, 9) on GPU in one transfer
-            obs_tensor = torch.tensor(
+            obs_t = torch.tensor(
                 np.stack([obs_dict[a] for a in env.agents]),
                 dtype=torch.float32,
                 device=device,
-            )  # (N, 9)
+            )
 
-            mean_actions = model(obs_tensor)  # (N, 3)
+            mean, values = model(obs_t)
+            std = model.log_std_clamped().exp()
+            dist = torch.distributions.Normal(mean, std)
 
-            std = log_std.exp().unsqueeze(0).expand(N, -1)  # (N, 3)
-            dist = torch.distributions.Normal(mean_actions, std)
+            actions_t = dist.sample()
 
-            actions_tensor = dist.sample()                              # (N, 3)
-            log_prob = dist.log_prob(actions_tensor).sum(dim=-1)       # (N,)
+            log_probs_buf.append(dist.log_prob(actions_t).sum(dim=-1))
+            values_buf.append(values)
+            entropy_buf.append(dist.entropy().sum(dim=-1))
 
-            # Convert to dict of numpy arrays for the env
-            actions_np = actions_tensor.clamp(-1.0, 1.0).cpu().numpy()
+            actions_np = actions_t.clamp(-1.0, 1.0).cpu().numpy()
             actions = {env.agents[i]: actions_np[i] for i in range(N)}
 
-            next_obs, rewards, terms, truncs, _ = env.step(actions)
+            obs_dict, rewards, _, truncs, _ = env.step(actions)
 
-            avg_reward = float(np.mean(list(rewards.values())))
-            rewards_buf.append(avg_reward)
-
-            # Store mean log-prob across agents
-            log_probs_buf.append(log_prob.mean())
+            r_tensor = torch.tensor(
+                [rewards[a] for a in env.agents],
+                dtype=torch.float32,
+                device=device,
+            )
+            rewards_buf.append(r_tensor)
 
             done = all(truncs.values())
-            obs_dict = next_obs
 
-        # --- compute discounted returns ---
-        returns = []
-        G = 0.0
-        for r in reversed(rewards_buf):
-            G = r + gamma * G
-            returns.insert(0, G)
+        T = len(rewards_buf)
 
-        returns_t = torch.tensor(returns, dtype=torch.float32, device=device)
-        returns_t = (returns_t - returns_t.mean()) / (returns_t.std() + 1e-8)
+        returns = torch.zeros(T, N, device=device)
+        G = torch.zeros(N, device=device)
+        for t in reversed(range(T)):
+            G = rewards_buf[t] + gamma * G
+            returns[t] = G
 
-        # --- REINFORCE loss ---
-        log_probs_t = torch.stack(log_probs_buf)  # (T,)
-        loss = -(log_probs_t * returns_t).sum()
+        returns = (returns - returns.mean(dim=0)) / (returns.std(dim=0) + 1e-8)
 
-        optimizer.zero_grad()
+        log_probs_t = torch.stack(log_probs_buf)
+        values_t = torch.stack(values_buf)
+        entropy_t = torch.stack(entropy_buf)
+
+        advantage = (returns - values_t).detach()
+
+        actor_loss = -(log_probs_t * advantage).mean()
+        critic_loss = F.mse_loss(values_t, returns)
+        entropy_loss = -entropy_t.mean()
+
+        loss = actor_loss + value_coef * critic_loss + ent_coef_now * entropy_loss
+
+        opt.zero_grad()
         loss.backward()
-        nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-        optimizer.step()
+        nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
+        opt.step()
+        scheduler.step()
 
-        ep_reward = sum(rewards_buf)
-        print(f"Episode {episode:4d} | Total reward: {ep_reward:8.2f} | Loss: {loss.item():8.4f}")
+        mean_reward = torch.stack(rewards_buf).mean().item()
+        print(
+            f"Ep {episode:4d} | "
+            f"MeanR: {mean_reward:.4f} | "
+            f"Actor: {actor_loss.item():7.4f} | "
+            f"Critic: {critic_loss.item():6.4f} | "
+            f"Std: {model.log_std_clamped().exp().mean().item():.3f} | "
+            f"EntCoef: {ent_coef_now:.4f}"
+        )
 
-    # --- export to ONNX ---
-    model.eval()
-    dummy_input = torch.randn(1, 9, device=device)
+    class ActorOnly(nn.Module):
+        def __init__(self, ac):
+            super().__init__()
+            self.ac = ac
+
+        def forward(self, x):
+            mean, _ = self.ac(x)
+            return mean.clamp(-1.0, 1.0)
+
+    actor_only = ActorOnly(model).eval().to(device)
+    dummy = torch.randn(1, 9, device=device)
 
     torch.onnx.export(
-        model,
-        dummy_input,
+        actor_only,
+        dummy,
         onnx_path,
         opset_version=11,
         input_names=["obs"],
         output_names=["action"],
-        dynamic_axes={"obs": {0: "batch_size"}, "action": {0: "batch_size"}},
+        dynamic_axes={"obs": {0: "batch"}, "action": {0: "batch"}},
     )
-    print(f"\nExported ONNX model → {onnx_path}")
-
+    print(f"\nExported → {onnx_path}")
     return model
 
-
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     train()
