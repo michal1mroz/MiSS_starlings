@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import argparse
+import csv
+import os
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -7,6 +11,11 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 from starling_env import StarlingFlockEnv
+
+try:
+    import onnxruntime
+except ImportError:  # pragma: no cover
+    onnxruntime = None
 
 
 class ActorCritic(nn.Module):
@@ -67,7 +76,6 @@ def train(
     N = num_birds
 
     for episode in range(episodes):
-
         frac = episode / max(episodes - 1, 1)
         ent_coef_now = entropy_coef + frac * (entropy_min - entropy_coef)
 
@@ -174,5 +182,115 @@ def train(
     return model
 
 
+def _load_onnx_session(onnx_path: str):
+    if onnxruntime is None:
+        raise ImportError(
+            "onnxruntime is required to run test mode. Install it with 'pip install onnxruntime'"
+        )
+
+    if not os.path.exists(onnx_path):
+        raise FileNotFoundError(f"ONNX file not found: {onnx_path}")
+
+    session = onnxruntime.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
+    input_name = session.get_inputs()[0].name
+    output_name = session.get_outputs()[0].name
+    return session, input_name, output_name
+
+
+def test(
+    onnx_path: str = "starling_policy.onnx",
+    num_birds: int = 150,
+    warmup_steps: int = 100,
+    record_steps: int = 50,
+    device_str: str = "cpu",
+):
+    session, input_name, output_name = _load_onnx_session(onnx_path)
+    env = StarlingFlockEnv(num_birds=num_birds, device=device_str)
+    output_csv = f"recorded_positions_{num_birds}birds.csv"
+
+
+    obs_dict, _ = env.reset()
+    num_agents = len(env.agents)
+
+    print(f"Testing ONNX model: {onnx_path}")
+    print(f"Warmup steps: {warmup_steps}, Record steps: {record_steps}")
+
+    for step in range(warmup_steps):
+        obs_np = np.stack([obs_dict[a] for a in env.agents]).astype(np.float32)
+        action = session.run([output_name], {input_name: obs_np})[0]
+        action = np.clip(action, -1.0, 1.0)
+        obs_dict, _, _, truncs, _ = env.step(action)
+        if all(truncs.values()):
+            print(f"Environment truncated during warmup at step {step + 1}")
+            break
+
+    record_steps = min(record_steps, env.max_steps - env.step_count)
+    if record_steps <= 0:
+        raise RuntimeError(
+            "No recording steps available after warmup. Reduce warmup_steps or increase env.max_steps."
+        )
+
+    with open(output_csv, "w", newline="", encoding="utf-8") as csv_file:
+        writer = csv.writer(csv_file)
+        writer.writerow(["tick", "bird_id", "x", "y", "z"])
+
+        for tick in range(1, record_steps + 1):
+            obs_np = np.stack([obs_dict[a] for a in env.agents]).astype(np.float32)
+            action = session.run([output_name], {input_name: obs_np})[0]
+            action = np.clip(action, -1.0, 1.0)
+            obs_dict, _, _, truncs, _ = env.step(action)
+
+            positions = env.pos_np
+            for bird_index, pos in enumerate(positions):
+                writer.writerow([tick, bird_index, float(pos[0]), float(pos[1]), float(pos[2])])
+
+            if all(truncs.values()):
+                print(f"Environment truncated during record phase at tick {tick}")
+                break
+
+    print(f"Recorded positions saved to {output_csv}")
+    return output_csv
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Train or test a starling policy.")
+    subparsers = parser.add_subparsers(dest="command", required=False)
+
+    train_parser = subparsers.add_parser("train", help="Train a new policy and export ONNX.")
+    train_parser.add_argument("--num_birds", type=int, default=150)
+    train_parser.add_argument("--episodes", type=int, default=300)
+    train_parser.add_argument("--lr", type=float, default=3e-4)
+    train_parser.add_argument("--hidden", type=int, default=256)
+    train_parser.add_argument("--onnx_path", type=str, default="starling_policy.onnx")
+    train_parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
+
+    test_parser = subparsers.add_parser("test", help="Run a saved ONNX policy and record bird positions.")
+    test_parser.add_argument("--onnx_path", type=str, default="starling_policy.onnx")
+    test_parser.add_argument("--num_birds", type=int, default=150)
+    test_parser.add_argument("--warmup_steps", type=int, default=150)
+    test_parser.add_argument("--record_steps", type=int, default=50)
+    test_parser.add_argument("--device", type=str, default="cpu")
+
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    train()
+    args = parse_args()
+
+    if args.command == "test":
+        test(
+            onnx_path=args.onnx_path,
+            num_birds=args.num_birds,
+            warmup_steps=args.warmup_steps,
+            record_steps=args.record_steps,
+            device_str=args.device,
+        )
+    else:
+        train(
+            num_birds=args.num_birds,
+            episodes=args.episodes,
+            lr=args.lr,
+            hidden=args.hidden,
+            onnx_path=args.onnx_path,
+            device_str=args.device,
+        )

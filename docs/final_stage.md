@@ -1,0 +1,26 @@
+# Achieved goals, test results and analysis
+
+Overall, we managed partialy to reach seeked goals. Visually, the model forms a flock that, although somewhat reminiscent of the murmurations of flocks of starlings, could not be achieved with a fully democratic model.
+
+A simplified multi-agent reinforcement learning (MARL) environment was implemented to model collective flocking behavior. Each agent represents a single bird moving in a three-dimensional space and observes only local information, consisting of its own velocity, the average relative position of neighboring birds, and their average velocity. Agents control changes in their velocity vector, allowing them to adjust their movement based on local interactions. The reward function encourages the emergence of realistic flocking behavior by optimizing three key properties: maintaining a target nearest-neighbor distance (cohesion), maintaining a target flight speed, and aligning movement direction with neighboring birds (polarity). Compared to the full project specification, the current implementation focuses on these core flocking mechanisms and serves as a computationally efficient baseline for further development and integration of additional geometric and structural flock metrics.
+
+
+## Tests
+
+As part of the tests, metrics were calculated, compared with empirical data, and graphs were generated that should coincide with the graphs from the article.
+
+| source_file                      | number_of_birds | volume_m3         | density_r          | nnd_r1             | velocity_m_s        | concavity           | balance_shift         | thickness_I1       | I2_I1              | I3_I1              | I1_G                | V_G                   | V_I1                |
+|----------------------------------|-----------------|-------------------|--------------------|--------------------|---------------------|---------------------|-----------------------|--------------------|--------------------|--------------------|---------------------|-----------------------|---------------------|
+| recorded_positions_1168birds.csv | 1168.0          | 6755.756012991906 | 24686.03732679896  | 0.6244004782107865 | 0.29885488680006406 | 0.8599803066582464  | -0.07028705894306463  | 4.3521818004029    | 1.2866169228594315 | 1.6430019716855226 | 0.4383500497084681  | 0.2587234952016091    | 0.635857564168775   |
+| recorded_positions_1246birds.csv | 1246.0          | 6843.238018357452 | 19437.360892721463 | 0.6153173919234118 | 0.41760556041568214 | 0.7399838075008417  | -0.03332302280454558  | 4.5225696746937665 | 1.2488874010301334 | 1.5674268671434715 | 0.4444206734227517  | 0.1922111548010794    | 0.40446289767249455 |
+| recorded_positions_1360birds.csv | 1360.0          | 5960.560503725531 | 28490.251314928493 | 0.5837796840492971 | 0.2995704715658314  | 0.5799861599706362  | 0.09764660397381075   | 3.9042701268987434 | 1.5224587000564886 | 1.8383067666628257 | 0.31827247461951447 | 0.25879643798075463   | 0.6908688059919597  |
+| recorded_positions_1856birds.csv | 1856.0          | 6481.673414577253 | 49270.223711089406 | 0.5700300724062312 | 0.4905105661187678  | 0.8199860897005142  | -0.019998839421436453 | 3.789712268807612  | 1.3061655520481184 | 1.6375722570869948 | 0.08202867307714178 | 0.22251435976273717   | 0.8055198076253792  |
+| recorded_positions_2631birds.csv | 2631.0          | 6684.122400705421 | 87982.72186438639  | 0.5149330964774572 | 0.19451198834492422 | 0.7999903840193623  | 0.021309497154909433  | 4.000702646306521  | 1.3841945485429514 | 1.673090576662986  | 0.23562599421963656 | 0.9009909527994493    | 0.30832219397682814 |
+| recorded_positions_448birds.csv  | 448.0           | 5062.403433395964 | 7698.473136939629  | 0.7490746593074411 | 0.6329405100366549  | 0.5999813213088909  | -0.07409768456721921  | 3.2150891454439345 | 1.8002618858955122 | 2.307615955404774  | 0.3030054468642356  | 0.0005954140633707728 | 0.6018446473759761  |
+| recorded_positions_534birds.csv  | 534.0           | 5560.459502203274 | 10601.820790308637 | 0.7052197768651811 | 0.5358518036732645  | 0.5999778106630113  | -0.04487959631428068  | 4.102921584905789  | 1.4232532041585244 | 1.6652093760203328 | 0.1406961033067157  | 0.18003486136217522   | 0.7006522878989041  |
+| recorded_positions_617birds.csv  | 617.0           | 5686.082663315063 | 4521.965821135722  | 0.7796429414406141 | 0.41379198034405834 | 0.6399815809802053  | -0.061875176981908975 | 4.110338505115883  | 1.2973721142749315 | 1.5994030197600215 | 0.19280829344286726 | 0.05592987374415302   | 0.6927073745864287  |
+| recorded_positions_781birds.csv  | 781.0           | 4528.633012682895 | 22775.38215294773  | 0.6355551225068462 | 0.4117327297461894  | 0.7399871789748257  | 0.05024511622477819   | 2.6602528576733295 | 2.0069756987777256 | 2.562571309095124  | 0.1574342047061229  | 0.43025089101332303   | 0.6691709748624443  |
+| recorded_positions_834birds.csv  | 834.0           | 5342.680617829425 | 10929.833056382919 | 0.6459781935400809 | 0.37837559482855665 | 0.47999321619897095 | 0.030906209392259916  | 3.0554962548563265 | 1.6604982298460036 | 2.210745723363008  | 0.07941799927730366 | 0.052593366940553     | 0.8721967937827736  |
+
+
+## Conclusions
