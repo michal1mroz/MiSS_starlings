@@ -202,7 +202,7 @@ class StarlingViz:
         self.world_size = world_size
         self.generation_range = min(generation_range, world_size)
         self.target_fps = target_fps
-        self.epsilon = epsilon          # follower base epsilon (CLI / runtime tweak)
+        self.epsilon = epsilon
         self.dt_scale = 1.0
         self.paused = True
         self.step_count = 0
@@ -319,10 +319,6 @@ class StarlingViz:
             start=True,
         )
 
-    # ------------------------------------------------------------------
-    # Colour helpers
-    # ------------------------------------------------------------------
-
     def _build_colors(self) -> np.ndarray:
         """Speed-based colours for all birds, leaders overridden to LEADER_COLOR."""
         colors = speed_to_color(self.env.vel_np, self.env.max_speed)
@@ -359,10 +355,6 @@ class StarlingViz:
 
         return np.concatenate([vel, pos, dist_to_walls], axis=1).astype(np.float32)
     
-    # ------------------------------------------------------------------
-    # Box drawing
-    # ------------------------------------------------------------------
-
     def _draw_box(self, size: float, color: tuple, offset: float = 0.0) -> None:
         o = offset
         s = size
