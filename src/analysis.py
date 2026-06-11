@@ -8,6 +8,11 @@ from typing import Any
 import numpy as np
 
 try:
+    import matplotlib.pyplot as plt
+except ImportError:  # pragma: no cover
+    plt = None
+
+try:
     from scipy.spatial import ConvexHull, KDTree, Delaunay
 except ImportError:  # pragma: no cover
     ConvexHull = None
@@ -195,6 +200,42 @@ def compute_thickness_I1(snapshot: np.ndarray) -> float:
     """Compute the smallest principal axis thickness I1."""
     axis_lengths, _ = compute_principal_axes(snapshot)
     return float(axis_lengths[0])
+
+
+def plot_thickness_I1_over_volume(
+    positions: Any,
+    ax: Any | None = None,
+    title: str = "Thickness I1 vs Volume",
+) -> Any:
+    """Plot scatter points of thickness I1 over flock volume per snapshot."""
+    if plt is None:
+        raise ImportError("matplotlib is required to plot thickness vs volume")
+
+    arr = _normalize_positions(positions)
+    if arr.shape[0] == 0:
+        raise ValueError("positions must contain at least one snapshot")
+
+    volumes = np.array([compute_convex_hull_volume(snapshot) for snapshot in arr], dtype=np.float64)
+    thicknesses = np.array([compute_thickness_I1(snapshot) for snapshot in arr], dtype=np.float64)
+
+    created_fig = False
+    if ax is None:
+        fig, ax = plt.subplots()
+        created_fig = True
+    else:
+        fig = ax.figure
+
+    ax.scatter(volumes, thicknesses, c="blue", alpha=0.75)
+    ax.set_xlabel("Volume (m³)")
+    ax.set_ylabel("Thickness I1")
+    ax.set_title(title)
+    ax.grid(True, linestyle="--", alpha=0.4)
+
+    if created_fig:
+        fig.tight_layout()
+        plt.show()
+
+    return ax
 
 
 def compute_aspect_ratios(snapshot: np.ndarray) -> tuple[float, float]:
@@ -396,6 +437,161 @@ def compute_metrics_for_directory(
     return output_csv
 
 
+def plot_thickness_over_density_from_summary(
+    summary_csv: Path | str,
+    ax: Any | None = None,
+    title: str = "Thickness I1 over Density",
+) -> Any:
+    """Plot thickness I1 over density from a directory summary CSV."""
+    if plt is None:
+        raise ImportError("matplotlib is required to plot thickness over density")
+
+    summary_path = Path(summary_csv)
+    if not summary_path.is_file():
+        raise ValueError(f"Summary CSV file not found: {summary_path}")
+
+    rows = []
+    with open(summary_path, newline="", encoding="utf-8") as csv_file:
+        reader = csv.DictReader(csv_file)
+        for row in reader:
+            rows.append(row)
+
+    if not rows:
+        raise ValueError(f"Summary CSV is empty: {summary_path}")
+    if "density_r" not in rows[0] or "thickness_I1" not in rows[0]:
+        raise ValueError("Summary CSV must contain 'density_r' and 'thickness_I1' columns")
+
+    density = np.array([float(row["density_r"]) for row in rows], dtype=np.float64)
+    thickness = np.array([float(row["thickness_I1"]) for row in rows], dtype=np.float64)
+    labels = [row.get("source_file", str(idx)) for idx, row in enumerate(rows, start=1)]
+
+    created_fig = False
+    if ax is None:
+        fig, ax = plt.subplots()
+        created_fig = True
+    else:
+        fig = ax.figure
+
+    ax.scatter(density, thickness, c="green", alpha=0.75)
+    for label, x_val, y_val in zip(labels, density, thickness):
+        ax.annotate(label, (x_val, y_val), fontsize=8, alpha=0.75)
+
+    ax.set_xlabel("Density (r)")
+    ax.set_ylabel("Thickness I1")
+    ax.set_title(title)
+    ax.grid(True, linestyle="--", alpha=0.4)
+
+    if created_fig:
+        fig.tight_layout()
+        plt.show()
+
+    return ax
+
+
+def plot_density_over_nnd_from_summary(
+    summary_csv: Path | str,
+    ax: Any | None = None,
+    title: str = "Density over NND",
+) -> Any:
+    """Plot density against nearest-neighbor distance from a summary CSV."""
+    if plt is None:
+        raise ImportError("matplotlib is required to plot density over NND")
+
+    summary_path = Path(summary_csv)
+    if not summary_path.is_file():
+        raise ValueError(f"Summary CSV file not found: {summary_path}")
+
+    rows = []
+    with open(summary_path, newline="", encoding="utf-8") as csv_file:
+        reader = csv.DictReader(csv_file)
+        for row in reader:
+            rows.append(row)
+
+    if not rows:
+        raise ValueError(f"Summary CSV is empty: {summary_path}")
+    if "density_r" not in rows[0] or "nnd_r1" not in rows[0]:
+        raise ValueError("Summary CSV must contain 'density_r' and 'nnd_r1' columns")
+
+    nnd = np.array([float(row["nnd_r1"]) for row in rows], dtype=np.float64)
+    density = np.array([float(row["density_r"]) for row in rows], dtype=np.float64)
+    labels = [row.get("source_file", str(idx)) for idx, row in enumerate(rows, start=1)]
+
+    created_fig = False
+    if ax is None:
+        fig, ax = plt.subplots()
+        created_fig = True
+    else:
+        fig = ax.figure
+
+    ax.scatter(nnd, density, c="purple", alpha=0.75)
+    for label, x_val, y_val in zip(labels, nnd, density):
+        ax.annotate(label, (x_val, y_val), fontsize=8, alpha=0.75)
+
+    ax.set_xlabel("Nearest-neighbor distance (r1)")
+    ax.set_ylabel("Density (r)")
+    ax.set_title(title)
+    ax.grid(True, linestyle="--", alpha=0.4)
+
+    if created_fig:
+        fig.tight_layout()
+        plt.show()
+
+    return ax
+
+
+def plot_average_metrics_per_file(
+    csv_paths: list[Path] | list[str],
+    metric_x: str = "volume_m3",
+    metric_y: str = "thickness_I1",
+    dt: float = 1.0,
+    ax: Any | None = None,
+    title: str | None = None,
+) -> Any:
+    """Plot average metric values for each CSV event file as one point per file."""
+    if plt is None:
+        raise ImportError("matplotlib is required to plot average metrics per file")
+
+    paths = [Path(p) for p in csv_paths]
+    if not paths:
+        raise ValueError("csv_paths must contain at least one file path")
+
+    metrics = []
+    for path in paths:
+        if not path.is_file():
+            raise ValueError(f"CSV file not found: {path}")
+        positions = read_positions_csv(path)
+        metrics.append(compute_flock_metrics(positions, dt=dt))
+
+    if metric_x not in metrics[0] or metric_y not in metrics[0]:
+        raise ValueError(f"Metrics must include '{metric_x}' and '{metric_y}'")
+
+    x_values = np.array([m[metric_x] for m in metrics], dtype=np.float64)
+    y_values = np.array([m[metric_y] for m in metrics], dtype=np.float64)
+    labels = [path.name for path in paths]
+
+    created_fig = False
+    if ax is None:
+        fig, ax = plt.subplots()
+        created_fig = True
+    else:
+        fig = ax.figure
+
+    scatter = ax.scatter(x_values, y_values, c="blue", alpha=0.75)
+    for label, x_val, y_val in zip(labels, x_values, y_values):
+        ax.annotate(label, (x_val, y_val), fontsize=8, alpha=0.75)
+
+    ax.set_xlabel(metric_x)
+    ax.set_ylabel(metric_y)
+    ax.set_title(title or f"{metric_y} vs {metric_x} per file")
+    ax.grid(True, linestyle="--", alpha=0.4)
+
+    if created_fig:
+        fig.tight_layout()
+        plt.show()
+
+    return ax
+
+
 def main() -> None:
     import argparse
 
@@ -407,13 +603,18 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.path.is_dir():
-        output_csv = compute_metrics_for_directory(
-            args.path,
-            args.output,
-            dt=args.dt,
-            recursive=args.recursive,
-        )
-        print(f"Saved metrics summary to {output_csv}")
+        # output_csv = compute_metrics_for_directory(
+        #     args.path,
+        #     args.output,
+        #     dt=args.dt,
+        #     recursive=args.recursive,
+        # )
+        # print(f"Saved metrics summary to {output_csv}")
+        try:
+            plot_thickness_over_density_from_summary("summary.csv")
+            plot_density_over_nnd_from_summary("summary.csv")
+        except ImportError as exc:
+            print(f"Could not plot results: {exc}")
     else:
         positions = read_positions_csv(args.path)
         metrics = compute_flock_metrics(positions, dt=args.dt)
@@ -444,7 +645,7 @@ def compute_flock_metrics(positions: Any, dt: float = 1.0) -> dict[str, float]:
         snapshot_metrics.append(
             {
                 "volume_m3": compute_convex_hull_volume(snapshot),
-                "density_r": compute_flock_density(snapshot),
+                "density_r": compute_flock_density(snapshot, use_alpha=False),
                 "nnd_r1": compute_nearest_neighbor_distance(snapshot),
                 "concavity": compute_concavity(snapshot),
                 "balance_shift": compute_balance_shift(snapshot, v_dir=global_v_dir),
