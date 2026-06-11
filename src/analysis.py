@@ -539,6 +539,66 @@ def plot_density_over_nnd_from_summary(
     return ax
 
 
+def plot_nnd_probability_distribution_from_record(
+    record_csv: Path | str,
+    ax: Any | None = None,
+    bins: int = 30,
+    title: str = "Probability distribution of NND",
+) -> Any:
+    """Plot the probability distribution of nearest-neighbor distances from a single record."""
+    if plt is None:
+        raise ImportError("matplotlib is required to plot the NND probability distribution")
+
+    record_path = Path(record_csv)
+    if not record_path.is_file():
+        raise ValueError(f"Record CSV file not found: {record_path}")
+
+    positions = read_positions_csv(record_path)
+    arr = _normalize_positions(positions)
+    if arr.shape[0] == 0:
+        raise ValueError("positions must contain at least one snapshot")
+
+    nnd_values: list[float] = []
+    for snapshot in arr:
+        if snapshot.shape[0] < 2:
+            continue
+        if KDTree is not None:
+            tree = KDTree(snapshot)
+            distances, _ = tree.query(snapshot, k=2)
+            nnd_values.extend(distances[:, 1].tolist())
+        else:
+            diff = snapshot[:, np.newaxis, :] - snapshot[np.newaxis, :, :]
+            dists = np.linalg.norm(diff, axis=-1)
+            np.fill_diagonal(dists, np.inf)
+            nnd_values.extend(np.min(dists, axis=1).tolist())
+
+    if not nnd_values:
+        raise ValueError("Not enough points in record to compute nearest-neighbor distances")
+
+    nnd_values_arr = np.array(nnd_values, dtype=np.float64)
+    created_fig = False
+    if ax is None:
+        fig, ax = plt.subplots()
+        created_fig = True
+    else:
+        fig = ax.figure
+
+    counts, bin_edges = np.histogram(nnd_values_arr, bins=bins, density=False)
+    counts = counts / counts.sum()
+    bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+    ax.scatter(bin_centers, counts, c="orange", alpha=0.75)
+    ax.set_xlabel("Nearest-neighbor distance (r1)")
+    ax.set_ylabel("Probability")
+    ax.set_title(title)
+    ax.grid(True, linestyle="--", alpha=0.4)
+
+    if created_fig:
+        fig.tight_layout()
+        plt.show()
+
+    return ax
+
+
 def plot_average_metrics_per_file(
     csv_paths: list[Path] | list[str],
     metric_x: str = "volume_m3",
@@ -603,22 +663,26 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.path.is_dir():
-        # output_csv = compute_metrics_for_directory(
-        #     args.path,
-        #     args.output,
-        #     dt=args.dt,
-        #     recursive=args.recursive,
-        # )
-        # print(f"Saved metrics summary to {output_csv}")
+        output_csv = compute_metrics_for_directory(
+            args.path,
+            args.output,
+            dt=args.dt,
+            recursive=args.recursive,
+        )
+        print(f"Saved metrics summary to {output_csv}")
         try:
-            plot_thickness_over_density_from_summary("summary.csv")
-            plot_density_over_nnd_from_summary("summary.csv")
+            plot_thickness_over_density_from_summary(output_csv)
+            plot_density_over_nnd_from_summary(output_csv)
         except ImportError as exc:
             print(f"Could not plot results: {exc}")
     else:
         positions = read_positions_csv(args.path)
         metrics = compute_flock_metrics(positions, dt=args.dt)
         print_flock_metrics(metrics)
+        try:
+            plot_nnd_probability_distribution_from_record(args.path)
+        except ImportError as exc:
+            print(f"Could not plot NND distribution: {exc}")
 
 
 def compute_flock_metrics(positions: Any, dt: float = 1.0) -> dict[str, float]:
